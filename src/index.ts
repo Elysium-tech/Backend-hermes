@@ -11,6 +11,7 @@ import { profileRoutes } from "./app/routes/profile.routes";
 import { guildRoutes } from "./app/routes/guild.routes";
 import { channelRoutes } from "./app/routes/channel.routes";
 import { inviteRoutes } from "./app/routes/invite.routes";
+import { rtcRoutes } from "./app/routes/rtc.routes";
 import { createRealtimeServer } from "./app/realtime/socket";
 import { setupSwagger } from "./swagger/openapi/swagger";
 
@@ -32,6 +33,8 @@ app.use("/profile", profileRoutes);
 app.use("/guilds", guildRoutes);
 app.use("/channels", channelRoutes);
 app.use("/invites", inviteRoutes);
+// Config ICE (STUN/TURN) para chamadas WebRTC — público, sem segredos de app.
+app.use("/rtc", rtcRoutes);
 
 // 404 no contrato ApiResponse (evita HTML padrão do Express fora do contrato)
 app.use((_req, res) => {
