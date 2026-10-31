@@ -59,4 +59,29 @@ export const createInviteSchema = z.object({
   maxUses: z.coerce.number().int().positive().optional(),
 });
 
+/** WebRTC signaling: entrada na room de call por guild+canal. */
+export const callJoinSchema = z.object({
+  guildId: z.string().min(1, "guildId é obrigatório"),
+  channelId: z.string().min(1, "channelId é obrigatório"),
+  userId: z.string().min(1, "userId é obrigatório"),
+});
+
+export type CallJoinInput = z.infer<typeof callJoinSchema>;
+
+/** SDP/ICE relay entre peers: offer/answer/candidate. */
+export const callSignalSchema = z.object({
+  from: z.string().min(1, "from é obrigatório"),
+  to: z.string().min(1, "to é obrigatório"),
+  type: z.string().min(1, "type é obrigatório"),
+  data: z.unknown().optional(),
+});
+
+export type CallSignalInput = z.infer<typeof callSignalSchema>;
+
+export const callLeaveSchema = z.object({
+  room: z.string().min(1, "room é obrigatório"),
+});
+
+export type CallLeaveInput = z.infer<typeof callLeaveSchema>;
+
 export type CreateInviteInput = z.infer<typeof createInviteSchema>;

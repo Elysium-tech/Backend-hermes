@@ -38,6 +38,14 @@ import {
   InviteExpiredError,
 } from "./realtime.service";
 import { postMessageBodySchema } from "./realtime.schema";
+import {
+  createCallRoom,
+  roomForCall,
+  storeLastSignal,
+  getLastSignal,
+  getIceServers,
+} from "./call.service";
+import { env } from "../config";
 import { UnauthorizedError } from "../@types/errors/unauthorized-error";
 import { ForbiddenError } from "../@types/errors/forbidden-error";
 import { NotFoundError } from "../@types/errors/not-found-error";
@@ -722,5 +730,259 @@ describe("convites (Invite)", () => {
     expect(err).toBeInstanceOf(InviteExpiredError);
     expect(err.statusCode).toBe(410);
     expect(prisma.channelMember.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("call.service (WebRTC signaling)", () => {
+  const guildRow = { id: "g-1", ownerId: "owner-1" };
+  const channelRow = { id: "ch-1", guildId: "g-1" };
+  const memberRow = { id: "m-1", channelId: "ch-1", userId: "user-1" };
+
+  function mockParticipant() {
+    vi.mocked(prisma.guild.findUnique).mockResolvedValue(guildRow as any);
+    vi.mocked(prisma.channel.findUnique).mockResolvedValue(
+      channelRow as any
+    );
+    vi.mocked(prisma.channelMember.findUnique).mockResolvedValue(
+      memberRow as any
+    );
+  }
+
+  it("roomForCall monta call:{guildId}:{channelId}", () => {
+    expect(roomForCall("g-1", "ch-1")).toBe("call:g-1:ch-1");
+  });
+
+  it("createCallRoom valida membro e faz socket.join na room", async () => {
+    mockParticipant();
+    const socket = { join: vi.fn().mockResolvedValue(undefined) };
+    const identity = await createCallRoom({
+      guildId: "g-1",
+      channelId: "ch-1",
+      userId: "user-1",
+      socket,
+    });
+    expect(socket.join).toHaveBeenCalledWith("call:g-1:ch-1");
+    expect(identity).toEqual({
+      room: "call:g-1:ch-1",
+      guildId: "g-1",
+      channelId: "ch-1",
+    });
+    expect(prisma.channelMember.findUnique).toHaveBeenCalledWith({
+      where: { channelId_userId: { channelId: "ch-1", userId: "user-1" } },
+    });
+  });
+
+  it("createCallRoom: guild inexistente -> NotFoundError", async () => {
+    vi.mocked(prisma.guild.findUnique).mockResolvedValue(null);
+    await expect(
+      createCallRoom({
+        guildId: "g-x",
+        channelId: "ch-1",
+        userId: "user-1",
+        socket: { join: vi.fn() },
+      })
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("createCallRoom: canal de outra guild -> NotFoundError", async () => {
+    vi.mocked(prisma.guild.findUnique).mockResolvedValue(guildRow as any);
+    vi.mocked(prisma.channel.findUnique).mockResolvedValue({
+      id: "ch-1",
+      guildId: "g-2",
+    } as any);
+    await expect(
+      createCallRoom({
+        guildId: "g-1",
+        channelId: "ch-1",
+        userId: "user-1",
+        socket: { join: vi.fn() },
+      })
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("createCallRoom: sem ChannelMember -> ForbiddenError e não entra na room", async () => {
+    vi.mocked(prisma.guild.findUnique).mockResolvedValue(guildRow as any);
+    vi.mocked(prisma.channel.findUnique).mockResolvedValue(
+      channelRow as any
+    );
+    vi.mocked(prisma.channelMember.findUnique).mockResolvedValue(null);
+    const socket = { join: vi.fn() };
+    await expect(
+      createCallRoom({
+        guildId: "g-1",
+        channelId: "ch-1",
+        userId: "user-1",
+        socket,
+      })
+    ).rejects.toThrow(ForbiddenError);
+    expect(socket.join).not.toHaveBeenCalled();
+  });
+
+  it("lastSignal é armazenado por par (from -> to)", () => {
+    expect(getLastSignal("user-10", "user-11")).toBeNull();
+    const signal = {
+      from: "user-10",
+      to: "user-11",
+      type: "offer",
+      data: { sdp: "v=0" },
+    };
+    storeLastSignal(signal);
+    expect(getLastSignal("user-10", "user-11")).toEqual(signal);
+    // Par invertido é outro par (sentido do signaling importa).
+    expect(getLastSignal("user-11", "user-10")).toBeNull();
+  });
+
+  it("getIceServers expõe STUN default via env.STUN_URL e não liga TURN sem URL", () => {
+    expect(env.STUN_URL).toBe("stun:stun.l.google.com:19302");
+    const servers = getIceServers();
+    expect(servers[0]).toEqual({ urls: "stun:stun.l.google.com:19302" });
+    expect(servers.every((s) => s.username === undefined)).toBe(true);
+  });
+});
+
+describe("registerSocketHandlers (call:join/call:signal/call:leave)", () => {
+  const guildRow = { id: "g-1", ownerId: "owner-1" };
+  const channelRow = { id: "ch-1", guildId: "g-1" };
+
+  function capture() {
+    const handlers: Record<string, Function> = {};
+    const emit = vi.fn();
+    const socket: any = {
+      data: { user: { id: "user-1" } },
+      join: vi.fn().mockResolvedValue(undefined),
+      leave: vi.fn().mockResolvedValue(undefined),
+      to: vi.fn().mockReturnValue({ emit }),
+      on: (ev: string, fn: Function) => {
+        handlers[ev] = fn;
+      },
+    };
+    registerSocketHandlers({} as any, socket);
+    return { handlers, socket, emit };
+  }
+
+  beforeEach(() => {
+    vi.mocked(prisma.guild.findUnique).mockResolvedValue(guildRow as any);
+    vi.mocked(prisma.channel.findUnique).mockResolvedValue(
+      channelRow as any
+    );
+    vi.mocked(prisma.channelMember.findUnique).mockResolvedValue({
+      id: "m-1",
+    } as any);
+  });
+
+  it("call:join valida participante e entra em call:{guildId}:{channelId}", async () => {
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:join"](
+      { guildId: "g-1", channelId: "ch-1", userId: "user-1" },
+      ack
+    );
+    expect(socket.join).toHaveBeenCalledWith("call:g-1:ch-1");
+    expect(ack).toHaveBeenCalledWith({
+      ok: true,
+      room: "call:g-1:ch-1",
+      guildId: "g-1",
+      channelId: "ch-1",
+    });
+    expect(socket.data.callRoom).toBe("call:g-1:ch-1");
+  });
+
+  it("call:join de não-membro responde ok:false e não entra na room", async () => {
+    vi.mocked(prisma.channelMember.findUnique).mockResolvedValue(null);
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:join"](
+      { guildId: "g-1", channelId: "ch-1", userId: "user-1" },
+      ack
+    );
+    expect(socket.join).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
+  });
+
+  it("call:join rejeita userId diferente do usuário autenticado", async () => {
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:join"](
+      { guildId: "g-1", channelId: "ch-1", userId: "user-2" },
+      ack
+    );
+    expect(socket.join).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
+  });
+
+  it("call:join com payload inválido responde ok:false", async () => {
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:join"]({ guildId: "g-1" }, ack);
+    expect(socket.join).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
+  });
+
+  it("call:signal repassa SDP/ICE para a room e guarda lastSignal do par", async () => {
+    const { handlers, socket, emit } = capture();
+    // call:join prévio define a room ativa do socket.
+    await handlers["call:join"](
+      { guildId: "g-1", channelId: "ch-1", userId: "user-1" },
+      vi.fn()
+    );
+    const ack = vi.fn();
+    const signal = {
+      from: "user-1",
+      to: "user-2",
+      type: "offer",
+      data: { sdp: "v=0" },
+    };
+    await handlers["call:signal"](signal, ack);
+    expect(socket.to).toHaveBeenCalledWith("call:g-1:ch-1");
+    expect(emit).toHaveBeenCalledWith("call:signal", signal);
+    expect(getLastSignal("user-1", "user-2")).toEqual(signal);
+    expect(ack).toHaveBeenCalledWith({
+      ok: true,
+      from: "user-1",
+      to: "user-2",
+      type: "offer",
+    });
+  });
+
+  it("call:signal exige from = usuário autenticado", async () => {
+    const { handlers, emit } = capture();
+    await handlers["call:join"](
+      { guildId: "g-1", channelId: "ch-1", userId: "user-1" },
+      vi.fn()
+    );
+    const ack = vi.fn();
+    await handlers["call:signal"](
+      { from: "user-2", to: "user-1", type: "answer", data: {} },
+      ack
+    );
+    expect(emit).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
+  });
+
+  it("call:signal sem call:join prévio responde ok:false", async () => {
+    const { handlers, emit } = capture();
+    const ack = vi.fn();
+    await handlers["call:signal"](
+      { from: "user-1", to: "user-2", type: "candidate", data: {} },
+      ack
+    );
+    expect(emit).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
+  });
+
+  it("call:leave sai da room e responde ok", async () => {
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:leave"]({ room: "call:g-1:ch-1" }, ack);
+    expect(socket.leave).toHaveBeenCalledWith("call:g-1:ch-1");
+    expect(ack).toHaveBeenCalledWith({ ok: true, room: "call:g-1:ch-1" });
+  });
+
+  it("call:leave com payload inválido responde ok:false", async () => {
+    const { handlers, socket } = capture();
+    const ack = vi.fn();
+    await handlers["call:leave"]({}, ack);
+    expect(socket.leave).not.toHaveBeenCalled();
+    expect(ack.mock.calls[0][0].ok).toBe(false);
   });
 });

@@ -13,6 +13,11 @@ const envSchema = z.object({
   BACKEND_URL: z.string().default("http://localhost:3000"),
   LOG_PRETTY: z.coerce.boolean().default(true),
   REDIS_URL: z.string().optional(),
+  // WebRTC signaling (chamadas)
+  STUN_URL: z.string().default("stun:stun.l.google.com:19302"),
+  TURN_URL: z.string().optional(),
+  TURN_USERNAME: z.string().optional(),
+  TURN_CREDENTIAL: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

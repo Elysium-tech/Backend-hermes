@@ -8,12 +8,18 @@ import { env } from "../config";
 import { prisma } from "../database/prisma";
 import { logger } from "../../shared/logger";
 import { UnauthorizedError } from "../@types/errors/unauthorized-error";
-import { sendMessageSchema, joinChannelSchema } from "./realtime.schema";
+import { sendMessageSchema, joinChannelSchema, callJoinSchema, callSignalSchema, callLeaveSchema } from "./realtime.schema";
 import {
   assertChannelMembership,
   sendChannelMessage,
   toMessageDTO,
 } from "./realtime.service";
+import {
+  createCallRoom,
+  storeLastSignal,
+  clearCallSignals,
+  type CallSignal,
+} from "./call.service";
 
 interface JwtPayload {
   sub: string;
@@ -176,6 +182,110 @@ export function registerSocketHandlers(io: Server, socket: Socket): void {
       return ack?.({
         ok: false,
         error: err?.message ?? "Falha ao enviar typing",
+      });
+    }
+  });
+
+  // ---- WebRTC signaling (chamadas) ----
+
+  // Entra na room call:{guildId}:{channelId} após validar guild/canal/membership.
+  // Usuário vem SEMPRE de socket.data.user.id (JWT verificado no handshake);
+  // o userId do payload só precisa conferir com o autenticado.
+  socket.on("call:join", async (payload: unknown, ack?: Ack) => {
+    try {
+      const parsed = callJoinSchema.safeParse(payload);
+      if (!parsed.success) {
+        return ack?.({
+          ok: false,
+          error: parsed.error.issues[0]?.message ?? "Payload inválido",
+        });
+      }
+      const { guildId, channelId, userId: requestedUserId } = parsed.data;
+      if (requestedUserId !== userId) {
+        return ack?.({
+          ok: false,
+          error: "userId não confere com o usuário autenticado",
+        });
+      }
+      const identity = await createCallRoom({
+        guildId,
+        channelId,
+        userId,
+        socket,
+      });
+      // Guarda a room atual: call:signal usa esse contexto p/ relay.
+      socket.data.callRoom = identity.room;
+      return ack?.({
+        ok: true,
+        room: identity.room,
+        guildId,
+        channelId,
+      });
+    } catch (err: any) {
+      return ack?.({
+        ok: false,
+        error: err?.message ?? "Falha ao entrar na call",
+      });
+    }
+  });
+
+  // Relay SDP/ICE entre peers da room; guarda o último sinal por par (from->to).
+  socket.on("call:signal", async (payload: unknown, ack?: Ack) => {
+    try {
+      const parsed = callSignalSchema.safeParse(payload);
+      if (!parsed.success) {
+        return ack?.({
+          ok: false,
+          error: parsed.error.issues[0]?.message ?? "Payload inválido",
+        });
+      }
+      const { from, to, type, data } = parsed.data;
+      if (from !== userId) {
+        return ack?.({
+          ok: false,
+          error: "Sinal deve ser enviado pelo usuário autenticado",
+        });
+      }
+      const room = socket.data.callRoom as string | undefined;
+      if (!room) {
+        return ack?.({
+          ok: false,
+          error: "Nenhuma call ativa neste canal",
+        });
+      }
+      const signal: CallSignal = { from, to, type, data };
+      storeLastSignal(signal);
+      // Entrega aos outros peers da room (exceto o remetente).
+      socket.to(room).emit("call:signal", signal);
+      return ack?.({ ok: true, from, to, type });
+    } catch (err: any) {
+      return ack?.({
+        ok: false,
+        error: err?.message ?? "Falha ao enviar sinal",
+      });
+    }
+  });
+
+  socket.on("call:leave", async (payload: unknown, ack?: Ack) => {
+    try {
+      const parsed = callLeaveSchema.safeParse(payload);
+      if (!parsed.success) {
+        return ack?.({
+          ok: false,
+          error: parsed.error.issues[0]?.message ?? "Payload inválido",
+        });
+      }
+      const { room } = parsed.data;
+      clearCallSignals(userId);
+      await socket.leave(room);
+      if (socket.data.callRoom === room) {
+        delete socket.data.callRoom;
+      }
+      return ack?.({ ok: true, room });
+    } catch (err: any) {
+      return ack?.({
+        ok: false,
+        error: err?.message ?? "Falha ao sair da call",
       });
     }
   });
