@@ -26,6 +26,25 @@ model User {
   channelMemberships ChannelMember[]
   messages           Message[]
   reactions          Reaction[]
+  passwordResetCodes PasswordResetCode[]
+}
+
+/// Código OTP de recuperação de senha (6 dígitos, uso único).
+/// Guardamos apenas o hash HMAC do código — nunca o valor em claro.
+model PasswordResetCode {
+  id         String    @id @default(uuid())
+  userId     String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 model Session {

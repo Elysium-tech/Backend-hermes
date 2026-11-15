@@ -102,6 +102,91 @@ export const authPaths = {
       },
     },
   },
+  "/auth/password/forgot": {
+    post: {
+      tags: ["Auth"],
+      summary: "Solicitar código OTP de recuperação de senha",
+      description:
+        "Sempre responde 200 com a mesma mensagem, exista ou não a conta (anti-enumeração). " +
+        "Rate limit: 3 pedidos por e-mail e 10 por IP a cada 15 minutos, com cooldown entre envios.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["email"],
+              properties: {
+                email: { type: "string", format: "email", example: "user@elysium.gg" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: "Solicitação recebida (resposta genérica)" },
+        400: { description: "Erro de validação" },
+        429: { description: "Muitas solicitações (header Retry-After)" },
+      },
+    },
+  },
+  "/auth/password/verify-code": {
+    post: {
+      tags: ["Auth"],
+      summary: "Validar o código OTP antes de definir a nova senha",
+      description:
+        "Passo opcional de UX: confirma o código sem consumi-lo. Cada tentativa errada conta para o limite de 5 por código.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["email", "code"],
+              properties: {
+                email: { type: "string", format: "email", example: "user@elysium.gg" },
+                code: { type: "string", example: "123456" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: "Código válido" },
+        400: { description: "Código inválido ou expirado" },
+        429: { description: "Muitas tentativas" },
+      },
+    },
+  },
+  "/auth/password/reset": {
+    post: {
+      tags: ["Auth"],
+      summary: "Redefinir a senha com o código OTP",
+      description:
+        "Consome o código, troca a senha e revoga todas as sessões ativas do usuário.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["email", "code", "newPassword"],
+              properties: {
+                email: { type: "string", format: "email", example: "user@elysium.gg" },
+                code: { type: "string", example: "123456" },
+                newPassword: { type: "string", format: "password", example: "novaSenha123" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: "Senha redefinida com sucesso" },
+        400: { description: "Código inválido/expirado ou senha fraca" },
+        429: { description: "Muitas tentativas" },
+      },
+    },
+  },
 };
 
 export const profilePaths = {
