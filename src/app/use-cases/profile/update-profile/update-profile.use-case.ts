@@ -1,5 +1,6 @@
 import { prisma } from "../../../database/prisma";
 import { NotFoundError } from "../../../@types/errors/not-found-error";
+import { presence } from "../../../realtime/presence.service";
 import { UpdateProfileInput } from "./update-profile.schema";
 
 export async function updateProfileUseCase(userId: string, input: UpdateProfileInput) {
@@ -28,6 +29,10 @@ export async function updateProfileUseCase(userId: string, input: UpdateProfileI
       updatedAt: true,
     },
   });
+
+  if (input.status !== undefined) {
+    await presence.applyStatus(userId, updated.status);
+  }
 
   return updated;
 }

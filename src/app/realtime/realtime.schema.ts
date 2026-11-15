@@ -84,4 +84,19 @@ export const callLeaveSchema = z.object({
 
 export type CallLeaveInput = z.infer<typeof callLeaveSchema>;
 
+export const presenceStatusSchema = z.enum([
+  "ONLINE",
+  "IDLE",
+  "DO_NOT_DISTURB",
+  "OFFLINE",
+]);
+
+export type PresenceStatus = z.infer<typeof presenceStatusSchema>;
+
+export const presenceSetSchema = z.object({
+  status: presenceStatusSchema,
+});
+
+export type PresenceSetInput = z.infer<typeof presenceSetSchema>;
+
 export type CreateInviteInput = z.infer<typeof createInviteSchema>;

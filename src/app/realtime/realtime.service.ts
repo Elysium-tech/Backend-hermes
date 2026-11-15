@@ -4,10 +4,12 @@ import { prisma } from "../database/prisma";
 import { ApiError } from "../@types/api/api-error";
 import { ForbiddenError } from "../@types/errors/forbidden-error";
 import { NotFoundError } from "../@types/errors/not-found-error";
+import { presence } from "./presence.service";
 import type {
   AddMemberInput,
   CreateChannelInput,
   CreateGuildInput,
+  PresenceStatus,
 } from "./realtime.schema";
 
 export interface AuthContext {
@@ -251,6 +253,8 @@ export interface ChannelMemberDTO {
   role: string;
   displayName: string;
   username: string;
+  status: PresenceStatus;
+  lastSeenAt: string | null;
 }
 
 export async function listChannelMembers(
@@ -262,18 +266,34 @@ export async function listChannelMembers(
   const rows = await prisma.channelMember.findMany({
     where: { channelId },
     include: {
-      user: { select: { displayName: true, username: true } },
+      user: {
+        select: {
+          displayName: true,
+          username: true,
+          status: true,
+          lastSeenAt: true,
+        },
+      },
     },
     orderBy: [{ role: "asc" }, { user: { username: "asc" } }],
   });
 
   return {
-    members: rows.map((m) => ({
-      userId: m.userId,
-      role: m.role,
-      displayName: m.user?.displayName ?? "",
-      username: m.user?.username ?? "",
-    })),
+    members: rows.map((m) => {
+      const snapshot = presence.resolve(
+        m.userId,
+        m.user?.status,
+        m.user?.lastSeenAt
+      );
+      return {
+        userId: m.userId,
+        role: m.role,
+        displayName: m.user?.displayName ?? "",
+        username: m.user?.username ?? "",
+        status: snapshot.status,
+        lastSeenAt: snapshot.lastSeenAt,
+      };
+    }),
   };
 }
 

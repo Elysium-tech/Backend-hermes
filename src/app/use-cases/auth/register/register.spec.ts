@@ -51,7 +51,7 @@ describe("registerUseCase", () => {
       passwordHash: "hashed_password",
       avatarUrl: null,
       bio: null,
-      status: "OFFLINE",
+      status: "ONLINE",
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);

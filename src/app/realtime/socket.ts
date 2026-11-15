@@ -8,12 +8,13 @@ import { env } from "../config";
 import { prisma } from "../database/prisma";
 import { logger } from "../../shared/logger";
 import { UnauthorizedError } from "../@types/errors/unauthorized-error";
-import { sendMessageSchema, joinChannelSchema, callJoinSchema, callSignalSchema, callLeaveSchema } from "./realtime.schema";
+import { sendMessageSchema, joinChannelSchema, callJoinSchema, callSignalSchema, callLeaveSchema, presenceSetSchema } from "./realtime.schema";
 import {
   assertChannelMembership,
   sendChannelMessage,
   toMessageDTO,
 } from "./realtime.service";
+import { presence } from "./presence.service";
 import {
   createCallRoom,
   storeLastSignal,
@@ -33,6 +34,10 @@ export interface VerifiedSocketAuth {
 
 export function roomForChannel(channelId: string): string {
   return `channel:${channelId}`;
+}
+
+export function roomForGuild(guildId: string): string {
+  return `guild:${guildId}`;
 }
 
 function extractBearerToken(raw?: string | null): string {
@@ -73,6 +78,58 @@ export async function verifySocketToken(
 }
 
 type Ack = (res: unknown) => void;
+
+async function guildIdsForUser(userId: string): Promise<string[]> {
+  const guilds = await prisma.guild.findMany({
+    where: {
+      OR: [
+        { ownerId: userId },
+        { channels: { some: { members: { some: { userId } } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return guilds.map((guild) => guild.id);
+}
+
+async function attachPresence(socket: Socket): Promise<void> {
+  const authUser = socket.data.user as { id: string } | undefined;
+  const userId = authUser?.id;
+  if (!userId) return;
+
+  socket.on("disconnect", () => {
+    void presence.disconnect(userId, socket.id);
+  });
+
+  socket.on("presence:set", async (payload: unknown, ack?: Ack) => {
+    try {
+      const parsed = presenceSetSchema.safeParse(payload);
+      if (!parsed.success) {
+        return ack?.({
+          ok: false,
+          error: parsed.error.issues[0]?.message ?? "Payload inválido",
+        });
+      }
+      const snapshot = await presence.setStatus(userId, parsed.data.status);
+      return ack?.({ ok: true, ...snapshot });
+    } catch (err: any) {
+      return ack?.({
+        ok: false,
+        error: err?.message ?? "Falha ao atualizar presença",
+      });
+    }
+  });
+
+  try {
+    const guildIds = await guildIdsForUser(userId);
+    await Promise.all(
+      guildIds.map((guildId) => socket.join(roomForGuild(guildId)))
+    );
+    await presence.connect(userId, socket.id, guildIds);
+  } catch (err) {
+    logger.error({ err, userId }, "Falha ao inicializar presença do socket");
+  }
+}
 
 export function registerSocketHandlers(io: Server, socket: Socket): void {
   const authUser = socket.data.user as { id: string } | undefined;
@@ -328,6 +385,14 @@ export function createRealtimeServer(app: Express): {
 
   io.on("connection", (socket) => {
     registerSocketHandlers(io, socket);
+    void attachPresence(socket);
+  });
+
+  presence.configure((userId, snapshot, guildIds) => {
+    io.to(guildIds.map(roomForGuild)).emit("presence:update", {
+      userId,
+      ...snapshot,
+    });
   });
 
   setupRedisAdapter(io).catch((err) => {

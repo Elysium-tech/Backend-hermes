@@ -16,7 +16,8 @@ model User {
   passwordHash String
   avatarUrl    String?
   bio          String?
-  status       String   @default("OFFLINE")
+  status       String   @default("ONLINE")
+  lastSeenAt   DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

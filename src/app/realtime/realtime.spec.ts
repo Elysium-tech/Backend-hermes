@@ -515,23 +515,74 @@ describe("listChannelMembers (GET /channels/:id/members)", () => {
       {
         userId: "user-1",
         role: "OWNER",
-        user: { displayName: "Elysium Dev", username: "elysium_dev" },
+        user: {
+          displayName: "Elysium Dev",
+          username: "elysium_dev",
+          status: "ONLINE",
+          lastSeenAt: null,
+        },
       },
       {
         userId: "user-2",
         role: "MEMBER",
-        user: { displayName: "Ada", username: "ada" },
+        user: {
+          displayName: "Ada",
+          username: "ada",
+          status: "OFFLINE",
+          lastSeenAt: new Date("2026-11-15T10:00:00.000Z"),
+        },
+      },
+      {
+        userId: "user-3",
+        role: "MEMBER",
+        user: {
+          displayName: "Carla",
+          username: "carla",
+          status: "ONLINE",
+          lastSeenAt: new Date("2026-11-15T09:00:00.000Z"),
+        },
       },
     ] as any);
     const res = await listChannelMembers("ch-1", "user-1");
     expect(res.members).toEqual([
-      { userId: "user-1", role: "OWNER", displayName: "Elysium Dev", username: "elysium_dev" },
-      { userId: "user-2", role: "MEMBER", displayName: "Ada", username: "ada" },
+      {
+        userId: "user-1",
+        role: "OWNER",
+        displayName: "Elysium Dev",
+        username: "elysium_dev",
+        status: "OFFLINE",
+        lastSeenAt: null,
+      },
+      {
+        userId: "user-2",
+        role: "MEMBER",
+        displayName: "Ada",
+        username: "ada",
+        status: "OFFLINE",
+        lastSeenAt: null,
+      },
+      {
+        userId: "user-3",
+        role: "MEMBER",
+        displayName: "Carla",
+        username: "carla",
+        status: "OFFLINE",
+        lastSeenAt: "2026-11-15T09:00:00.000Z",
+      },
     ]);
     expect(prisma.channelMember.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { channelId: "ch-1" },
-        include: { user: { select: { displayName: true, username: true } } },
+        include: {
+          user: {
+            select: {
+              displayName: true,
+              username: true,
+              status: true,
+              lastSeenAt: true,
+            },
+          },
+        },
         orderBy: [{ role: "asc" }, { user: { username: "asc" } }],
       })
     );
