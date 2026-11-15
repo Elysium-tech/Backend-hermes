@@ -11,6 +11,7 @@ vi.mock("../database/prisma", () => ({
       create: vi.fn(),
       findMany: vi.fn(),
       count: vi.fn(),
+      groupBy: vi.fn(),
     },
     invite: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     message: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
@@ -629,6 +630,7 @@ describe("convites (Invite)", () => {
     vi.mocked(prisma.invite.findUnique).mockResolvedValue({
       token: "tok",
       guildId: "g-1",
+      expiresAt: new Date("2026-12-01T00:00:00.000Z"),
       guild: {
         id: "g-1",
         name: "Arcadium",
@@ -636,14 +638,18 @@ describe("convites (Invite)", () => {
         iconUrl: null,
       },
     } as any);
-    vi.mocked(prisma.channelMember.count).mockResolvedValue(7 as never);
+    vi.mocked(prisma.channelMember.groupBy).mockResolvedValue([
+      { userId: "u-1" },
+      { userId: "u-2" },
+    ] as never);
     const info = await getInviteInfo("tok");
     expect(info).toEqual({
       id: "g-1",
       name: "Arcadium",
       description: "desc",
       iconUrl: null,
-      memberCount: 7,
+      memberCount: 2,
+      expiresAt: "2026-12-01T00:00:00.000Z",
     });
   });
 

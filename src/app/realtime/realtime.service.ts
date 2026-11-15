@@ -316,7 +316,8 @@ export async function getInviteInfo(token: string) {
   if (!invite) {
     throw new NotFoundError("Convite não encontrado");
   }
-  const memberCount = await prisma.channelMember.count({
+  const members = await prisma.channelMember.groupBy({
+    by: ["userId"],
     where: { channel: { guildId: invite.guildId } },
   });
   return {
@@ -324,7 +325,8 @@ export async function getInviteInfo(token: string) {
     name: invite.guild.name,
     description: invite.guild.description,
     iconUrl: invite.guild.iconUrl,
-    memberCount,
+    memberCount: members.length,
+    expiresAt: invite.expiresAt.toISOString(),
   };
 }
 
